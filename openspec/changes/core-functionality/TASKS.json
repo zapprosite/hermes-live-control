@@ -1,0 +1,24 @@
+{
+  "change_name": "core-functionality",
+  "status": "planned",
+  "queue": [
+    {
+      "id": "TASK_001",
+      "title": "Configurar Backend Tauri e IPC",
+      "context_budget": "15k tokens",
+      "status": "pending"
+    },
+    {
+      "id": "TASK_002",
+      "title": "Integração LiveKit (Voice SDK)",
+      "context_budget": "20k tokens",
+      "status": "pending"
+    },
+    {
+      "id": "TASK_003",
+      "title": "Gerenciamento de Estado de Sessão e Memória",
+      "context_budget": "10k tokens",
+      "status": "pending"
+    }
+  ]
+}
