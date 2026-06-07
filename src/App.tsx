@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Menu, Paperclip, Orbit, Play, MessageSquare, Search, Send, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import SessionSidebar, { type SessionSummary } from "./components/SessionSidebar";
 import "./index.css";
 
 function App() {
@@ -9,8 +10,8 @@ function App() {
 
   
   // App states
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [currentSession, setCurrentSession] = useState<any | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [currentSession, setCurrentSession] = useState<SessionSummary | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -53,12 +54,42 @@ function App() {
 
   async function handleCreateSession(title?: string) {
     try {
-      const newSession: any = await invoke("create_session", { title: title || "New Session" });
+      const newSession: any = await invoke("create_session", { title: title || "New Chat" });
       setSessions(prev => [newSession, ...prev]);
       setCurrentSession(newSession);
       setMessages([]);
     } catch (error) {
       console.error("Failed to create session:", error);
+    }
+  }
+
+  async function handleRenameSession(id: string, title: string) {
+    try {
+      const updated: any = await invoke("rename_session", { sessionId: id, title });
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, title: updated.title, updated_at: updated.updated_at } : s));
+      if (currentSession?.id === id) {
+        setCurrentSession((prev: any) => prev ? { ...prev, title: updated.title } : prev);
+      }
+    } catch (error) {
+      console.error("Failed to rename session:", error);
+    }
+  }
+
+  async function handleDeleteSession(id: string) {
+    try {
+      await invoke("delete_session", { sessionId: id });
+      const remaining = sessions.filter(s => s.id !== id);
+      setSessions(remaining);
+      if (currentSession?.id === id) {
+        if (remaining.length > 0) {
+          selectSession(remaining[0].id);
+        } else {
+          setCurrentSession(null);
+          setMessages([]);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to delete session:", error);
     }
   }
 
@@ -120,58 +151,17 @@ function App() {
   return (
     <div className="flex h-screen bg-background text-primary overflow-hidden font-sans selection:bg-accent selection:text-white relative">
       
-      {/* Sidebar Overlay */}
-      {isSidebarOpen && (
-        <div 
-          onClick={() => setIsSidebarOpen(false)} 
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-20 transition-opacity duration-300"
-        />
-      )}
-
-      {/* Sidebar Drawer */}
-      <aside className={`fixed top-0 left-0 h-full w-80 bg-surface border-r border-border z-30 transform ${
-        isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-      } transition-transform duration-300 ease-out flex flex-col`}>
-        {/* Sidebar Header */}
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          <span className="font-semibold text-sm tracking-wider uppercase text-secondary">Sessions</span>
-          <button 
-            onClick={() => {
-              handleCreateSession();
-              setIsSidebarOpen(false);
-            }} 
-            className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs hover:bg-accent/80 transition-colors cursor-pointer"
-          >
-            + New Chat
-          </button>
-        </div>
-
-        {/* Sessions List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {sessions.map((sess) => (
-            <button 
-              key={sess.id}
-              onClick={() => {
-                selectSession(sess.id);
-                setIsSidebarOpen(false);
-              }}
-              className={`w-full text-left p-3 rounded-xl border transition-all duration-200 group flex flex-col gap-1 cursor-pointer ${
-                currentSession?.id === sess.id 
-                ? 'bg-accent/10 border-accent/40 text-primary' 
-                : 'bg-transparent border-transparent hover:bg-border/30 text-secondary hover:text-primary'
-              }`}
-            >
-              <span className="font-medium text-sm truncate w-full">{sess.title}</span>
-              <span className="text-[10px] opacity-60">
-                {new Date(sess.updated_at).toLocaleDateString()} {new Date(sess.updated_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-              </span>
-            </button>
-          ))}
-          {sessions.length === 0 && (
-            <p className="text-xs text-secondary/50 text-center py-8">No sessions yet</p>
-          )}
-        </div>
-      </aside>
+      {/* Sidebar */}
+      <SessionSidebar
+        sessions={sessions}
+        activeSessionId={currentSession?.id ?? null}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        onSelect={selectSession}
+        onCreate={handleCreateSession}
+        onRename={handleRenameSession}
+        onDelete={handleDeleteSession}
+      />
 
       {/* Main Container */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
