@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { Menu, Paperclip, Orbit, Play, MessageSquare, Search, Send } from "lucide-react";
+import { Menu, Paperclip, Orbit, Play, MessageSquare, Search, Send, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import "./index.css";
 
 function App() {
   const [inputText, setInputText] = useState("");
   const [isLiveVoice, setIsLiveVoice] = useState(false);
-  const [voiceState, setVoiceState] = useState<'listening' | 'thinking' | 'speaking'>('listening');
-  const [livekitCreds, setLivekitCreds] = useState<any | null>(null);
+
   
   // App states
   const [sessions, setSessions] = useState<any[]>([]);
@@ -108,9 +107,7 @@ function App() {
   async function toggleLiveVoice() {
     if (!isLiveVoice) {
       try {
-        const creds: any = await invoke("get_livekit_token");
-        setLivekitCreds(creds);
-        setVoiceState('listening');
+        await invoke("get_livekit_token");
         setIsLiveVoice(true);
       } catch (error) {
         console.error("Failed to fetch LiveKit token:", error);
@@ -200,16 +197,16 @@ function App() {
               <div className="w-full max-w-2xl flex flex-col items-center space-y-12 pb-24 animate-in fade-in slide-in-from-bottom-4 duration-700 ease-out">
                 
                 <div className="text-center space-y-3">
-                  <h2 className="text-4xl font-light tracking-tight sm:text-5xl bg-clip-text text-transparent bg-gradient-to-b from-white to-white/60">
+                  <h2 className="text-4xl font-light tracking-tight sm:text-5xl text-white/90">
                     How can I help you today?
                   </h2>
-                  <p className="text-secondary/80 text-sm">Hermes Agent OS</p>
+                  <p className="text-secondary/50 text-xs">Hermes Agent OS</p>
                 </div>
 
                 {/* Suggestion Chips */}
                 <div className="flex flex-wrap justify-center gap-3 w-full">
                   <SuggestionChip 
-                    icon={<Play className="w-4 h-4" />} 
+                    icon={<Play className="w-3.5 h-3.5" />} 
                     text="Continue Session" 
                     onClick={() => {
                       if (sessions.length > 0) {
@@ -218,17 +215,17 @@ function App() {
                     }}
                   />
                   <SuggestionChip 
-                    icon={<Orbit className="w-4 h-4 text-accent" />} 
+                    icon={<Orbit className="w-3.5 h-3.5" />} 
                     text="Start Live Voice" 
                     onClick={toggleLiveVoice}
                   />
                   <SuggestionChip 
-                    icon={<Search className="w-4 h-4" />} 
+                    icon={<Search className="w-3.5 h-3.5" />} 
                     text="Search Memories" 
                     onClick={() => alert("Memory indexing logs verified. Search interop is active.")}
                   />
                   <SuggestionChip 
-                    icon={<MessageSquare className="w-4 h-4" />} 
+                    icon={<MessageSquare className="w-3.5 h-3.5" />} 
                     text="New Chat Session" 
                     onClick={() => handleCreateSession("New Chat Session")}
                   />
@@ -279,7 +276,7 @@ function App() {
 
         {/* Composer Footer */}
         <footer className="w-full max-w-3xl mx-auto px-6 pb-8 pt-2">
-          <div className="relative flex items-end w-full rounded-3xl bg-surface border border-border/80 shadow-2xl overflow-hidden focus-within:ring-1 focus-within:ring-accent/50 focus-within:border-accent/50 transition-all duration-300">
+          <div className="relative flex items-end w-full rounded-2xl bg-surface border border-border/80 shadow-2xl overflow-hidden focus-within:ring-1 focus-within:ring-accent/40 focus-within:border-accent/40 transition-all duration-300">
             
             <div className="flex items-center p-3">
               <button 
@@ -290,28 +287,46 @@ function App() {
               </button>
             </div>
 
-            <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage();
-                }
-              }}
-              placeholder="Talk to Hermes..."
-              className="flex-1 bg-transparent border-0 resize-none outline-none py-4 text-primary placeholder:text-secondary/60 text-base max-h-48 min-h-[56px] w-full"
-              rows={1}
-            />
+            {isLiveVoice ? (
+              <div className="flex-1 flex flex-col justify-center py-4">
+                <div className="animate-pulse bg-accent/20 rounded-full h-2 mx-4" />
+                <p className="text-xs text-secondary text-center mt-2">Listening...</p>
+              </div>
+            ) : (
+              <textarea
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
+                placeholder="Talk to Hermes..."
+                className="flex-1 bg-transparent border-0 resize-none outline-none py-4 text-primary placeholder:text-secondary/60 text-base max-h-48 min-h-[56px] w-full"
+                rows={1}
+              />
+            )}
 
             <div className="flex items-center p-3 gap-1">
-              <button 
-                onClick={handleSendMessage}
-                className="p-3 rounded-full text-secondary hover:text-primary hover:bg-border/50 transition-colors cursor-pointer"
-                title="Send message"
-              >
-                <Send className="w-5 h-5" />
-              </button>
+              {inputText.length > 0 && !isLiveVoice && (
+                <button 
+                  onClick={handleSendMessage}
+                  className="p-3 rounded-full text-secondary hover:text-primary hover:bg-border/50 transition-colors cursor-pointer"
+                  title="Send message"
+                >
+                  <Send className="w-5 h-5" />
+                </button>
+              )}
+              {isLiveVoice && (
+                <button
+                  onClick={toggleLiveVoice}
+                  className="p-3 rounded-full text-secondary hover:text-primary hover:bg-border/50 transition-colors cursor-pointer"
+                  title="Dismiss voice mode"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
               <button 
                 onClick={toggleLiveVoice}
                 className={`p-3 rounded-full transition-all duration-300 flex items-center justify-center cursor-pointer ${
@@ -331,57 +346,7 @@ function App() {
         </footer>
       </div>
 
-      {/* Live Voice Screen Overlay */}
-      {isLiveVoice && (
-        <div className="fixed inset-0 bg-background/95 backdrop-blur-lg z-40 flex flex-col items-center justify-center transition-all duration-300">
-          <div className="absolute top-6 right-6">
-            <button 
-              onClick={toggleLiveVoice} 
-              className="p-3 rounded-xl bg-surface border border-border hover:bg-border/50 text-primary transition-colors cursor-pointer text-sm"
-            >
-              ✕ Close
-            </button>
-          </div>
 
-          <div className="flex flex-col items-center space-y-12 animate-in fade-in zoom-in duration-500">
-            {/* Voice Orb */}
-            <div 
-              onClick={() => {
-                if (voiceState === 'listening') setVoiceState('thinking');
-                else if (voiceState === 'thinking') setVoiceState('speaking');
-                else setVoiceState('listening');
-              }}
-              className={`w-40 h-40 rounded-full bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center cursor-pointer shadow-2xl relative transition-all duration-500 ${
-                voiceState === 'listening' ? 'scale-105 animate-pulse' : 
-                voiceState === 'thinking' ? 'animate-spin-slow' : 'scale-110 shadow-[0_0_50px_rgba(99,102,241,0.6)]'
-              }`}
-            >
-              <div className="w-36 h-36 rounded-full bg-background flex flex-col items-center justify-center">
-                <Orbit className={`w-12 h-12 text-accent ${voiceState === 'thinking' ? 'animate-spin' : ''}`} />
-              </div>
-              
-              <div className="absolute -inset-2 rounded-full border border-accent/20 animate-ping opacity-70" />
-            </div>
-
-            <div className="text-center space-y-2">
-              <h3 className="text-xl font-medium capitalize tracking-wide text-primary">
-                {voiceState === 'listening' ? 'Listening...' : voiceState === 'thinking' ? 'Thinking...' : 'Speaking...'}
-              </h3>
-              <p className="text-xs text-secondary/60 max-w-xs px-4">
-                {voiceState === 'listening' ? 'Speak naturally. Tap the orb to simulate thinking.' : 
-                 voiceState === 'thinking' ? 'Processing your voice turn. Tap to speak.' : 
-                 'Playback of voice response. Tap to listen again.'}
-              </p>
-            </div>
-
-            {livekitCreds && (
-              <div className="px-4 py-2 rounded-full bg-surface border border-border text-[10px] text-secondary/70">
-                LiveKit Token Active • {livekitCreds.url}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -390,11 +355,9 @@ function SuggestionChip({ icon, text, onClick }: { icon: React.ReactNode; text: 
   return (
     <button 
       onClick={onClick}
-      className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface border border-border/60 hover:border-accent/40 hover:bg-surface/80 text-secondary hover:text-primary text-sm font-medium transition-all duration-300 shadow-sm hover:shadow-md active:scale-95 group cursor-pointer"
+      className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-transparent border border-border/40 hover:bg-border/20 text-secondary hover:text-primary text-sm transition-all duration-200 active:scale-95 cursor-pointer"
     >
-      <span className="opacity-70 group-hover:opacity-100 transition-opacity">
-        {icon}
-      </span>
+      <span>{icon}</span>
       <span>{text}</span>
     </button>
   );
