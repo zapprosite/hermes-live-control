@@ -1,7 +1,7 @@
 ## 1. Environment Setup
 
-- [ ] 1.1 Confirm `hermes` binary is present at `/home/will/.local/bin/hermes` and responds to `hermes --version`
-- [ ] 1.2 Run `npm run tauri dev` and confirm the app window opens without console errors
+- [x] 1.1 Confirm `hermes` binary is present at `/home/will/.local/bin/hermes` and responds to `hermes --version`
+- [x] 1.2 Run `npm run tauri dev` and confirm the app window opens without console errors
 
 ## 2. T1 — New Conversation
 
