@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Menu, Paperclip, Orbit, Play, MessageSquare, Search, Send, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import SessionSidebar, { type SessionSummary } from "./components/SessionSidebar";
 import "./index.css";
 
@@ -15,6 +16,7 @@ function App() {
   const [messages, setMessages] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [streamingContent, setStreamingContent] = useState<string>("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -97,8 +99,10 @@ function App() {
     if (!inputText.trim() || isLoading || !currentSession) return;
 
     const userText = inputText;
+    const activeSessionId = currentSession.id;
     setInputText("");
     setIsLoading(true);
+    setStreamingContent("");
 
     // Append user message immediately to the UI
     const tempUserMsg = {
@@ -109,28 +113,37 @@ function App() {
     };
     setMessages(prev => [...prev, tempUserMsg]);
 
+    // Register chunk listener BEFORE invoking send_message so no events are missed
+    const unlisten = await listen<{ sessionId: string; text: string }>("hermes://chunk", (event) => {
+      if (event.payload.sessionId !== activeSessionId) return;
+      setStreamingContent(prev => prev ? prev + "\n" + event.payload.text : event.payload.text);
+    });
+
     try {
       const assistantMsg: any = await invoke("send_message", {
-        sessionId: currentSession.id,
+        sessionId: activeSessionId,
         text: userText
       });
-      // Replace or finalize messages
+      // Replace streaming state with the final persisted Message
+      setStreamingContent("");
       setMessages(prev => [...prev.filter(m => m.id !== tempUserMsg.id), tempUserMsg, assistantMsg]);
-      
-      // Reload sessions list to reflect updated order and previews
+
+      // Reload sessions list to reflect updated order and title
       const list: any[] = await invoke("list_sessions");
       setSessions(list);
     } catch (error) {
       console.error("Failed to send message:", error);
-      // Append an error message block
+      setStreamingContent("");
+      // Append an inline error bubble
       const errorMsg = {
         id: Math.random().toString(),
-        role: "assistant",
-        content: `Error: ${error}`,
+        role: "error",
+        content: `${error}`,
         timestamp: Date.now()
       };
       setMessages(prev => [...prev, errorMsg]);
     } finally {
+      unlisten();
       setIsLoading(false);
     }
   }
@@ -228,11 +241,17 @@ function App() {
               {messages.map((msg) => (
                 <div 
                   key={msg.id} 
-                  className={`flex gap-4 max-w-3xl ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
+                  className={`flex gap-4 max-w-3xl ${
+                    msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
+                  }`}
                 >
                   {/* Avatar */}
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 border text-xs font-semibold ${
-                    msg.role === 'user' ? 'bg-primary border-primary text-background' : 'bg-gradient-to-tr from-accent to-purple-600 border-border text-white'
+                    msg.role === 'user'
+                      ? 'bg-primary border-primary text-background'
+                      : msg.role === 'error'
+                      ? 'bg-red-500/20 border-red-500/40 text-red-400'
+                      : 'bg-gradient-to-tr from-accent to-purple-600 border-border text-white'
                   }`}>
                     {msg.role === 'user' ? 'U' : 'H'}
                   </div>
@@ -241,6 +260,8 @@ function App() {
                   <div className={`rounded-2xl px-4 py-3 max-w-[85%] text-sm leading-relaxed shadow-sm ${
                     msg.role === 'user' 
                     ? 'bg-accent text-white rounded-tr-none' 
+                    : msg.role === 'error'
+                    ? 'bg-surface border border-red-500/40 text-red-400 rounded-tl-none whitespace-pre-wrap'
                     : 'bg-surface border border-border text-primary rounded-tl-none whitespace-pre-wrap'
                   }`}>
                     {msg.content}
@@ -248,14 +269,21 @@ function App() {
                 </div>
               ))}
               {isLoading && (
-                <div className="flex gap-4 max-w-3xl mr-auto animate-pulse">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-accent to-purple-600 border border-border flex items-center justify-center text-white text-xs font-semibold">
+                <div className="flex gap-4 max-w-3xl mr-auto">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-accent to-purple-600 border border-border flex items-center justify-center text-white text-xs font-semibold shrink-0">
                     H
                   </div>
-                  <div className="bg-surface border border-border rounded-2xl rounded-tl-none px-4 py-3 text-secondary text-sm">
-                    <span className="flex items-center gap-1.5">
-                      Thinking...
-                    </span>
+                  <div className="bg-surface border border-border rounded-2xl rounded-tl-none px-4 py-3 text-primary text-sm max-w-[85%] whitespace-pre-wrap">
+                    {streamingContent ? (
+                      <span>
+                        {streamingContent}
+                        <span className="inline-block w-0.5 h-4 bg-accent ml-0.5 animate-pulse align-middle" />
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-secondary animate-pulse">
+                        Thinking...
+                      </span>
+                    )}
                   </div>
                 </div>
               )}

@@ -1,10 +1,12 @@
+mod bridge;
+
 use std::fs::{self};
 use std::path::PathBuf;
-use std::process::Command;
 use serde::{Serialize, Deserialize};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 use chrono::Utc;
+use bridge::HermesBridge;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Message {
@@ -65,42 +67,7 @@ fn save_session(app_handle: &AppHandle, session: &Session) -> Result<(), String>
     Ok(())
 }
 
-fn get_hermes_path() -> Option<String> {
-    let primary = "/home/will/.local/bin/hermes";
-    if std::path::Path::new(primary).exists() {
-        Some(primary.to_string())
-    } else {
-        if let Ok(output) = Command::new("which").arg("hermes").output() {
-            if output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path_str.is_empty() {
-                    return Some(path_str);
-                }
-            }
-        }
-        None
-    }
-}
 
-fn get_latest_cli_session_id(hermes_bin: &str) -> Option<String> {
-    let output = Command::new(hermes_bin)
-        .args(&["sessions", "list"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    if lines.len() > 2 {
-        let first_data_line = lines[2];
-        let words: Vec<&str> = first_data_line.split_whitespace().collect();
-        if let Some(last_word) = words.last() {
-            return Some(last_word.to_string());
-        }
-    }
-    None
-}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -194,6 +161,7 @@ async fn send_message(app_handle: AppHandle, session_id: String, text: String) -
         session.title = auto_title(&text, 40);
     }
 
+    // Append user message before calling the CLI
     let user_msg = Message {
         id: Uuid::new_v4().to_string(),
         role: "user".to_string(),
@@ -202,40 +170,16 @@ async fn send_message(app_handle: AppHandle, session_id: String, text: String) -
     };
     session.messages.push(user_msg);
     session.updated_at = Utc::now().timestamp_millis();
-    save_session(&app_handle, &session)?;
 
-    let response_content = match get_hermes_path() {
-        Some(hermes_bin) => {
-            let mut cmd = Command::new(&hermes_bin);
-            cmd.arg("-z").arg(&text);
-            
-            if let Some(ref cli_id) = session.cli_session_id {
-                cmd.arg("-r").arg(cli_id);
-            }
+    // Delegate to HermesBridge — surfaces "CLI not found" as a hard error
+    let bridge = HermesBridge::new()?;
+    let (response_content, new_cli_session_id) =
+        bridge.run(app_handle.clone(), session_id.clone(), session.cli_session_id.clone(), text)?;
 
-            let output = cmd.output().map_err(|e| format!("Failed to run hermes CLI: {}", e))?;
-            
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("Hermes CLI failed: {}", stderr));
-            }
-
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-            if session.cli_session_id.is_none() {
-                if let Some(latest_id) = get_latest_cli_session_id(&hermes_bin) {
-                    session.cli_session_id = Some(latest_id);
-                }
-            }
-
-            stdout
-        }
-        None => {
-            let mock_res = format!("This is a mock response from Hermes. (CLI not found in environment). You said: {}", text);
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            mock_res
-        }
-    };
+    // Update cli_session_id if newly obtained
+    if let Some(new_id) = new_cli_session_id {
+        session.cli_session_id = Some(new_id);
+    }
 
     let assistant_msg = Message {
         id: Uuid::new_v4().to_string(),
@@ -245,6 +189,8 @@ async fn send_message(app_handle: AppHandle, session_id: String, text: String) -
     };
     session.messages.push(assistant_msg.clone());
     session.updated_at = Utc::now().timestamp_millis();
+
+    // Single save_session call after both messages are ready
     save_session(&app_handle, &session)?;
 
     Ok(assistant_msg)
