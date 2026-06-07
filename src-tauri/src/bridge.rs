@@ -1,8 +1,8 @@
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
+use std::sync::mpsc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -16,7 +16,7 @@ pub struct ChunkPayload {
 
 /// Owns the resolved path to the Hermes CLI binary.
 pub struct HermesBridge {
-    bin: String,
+    pub bin: String,
 }
 
 impl HermesBridge {
@@ -46,18 +46,53 @@ impl HermesBridge {
         ))
     }
 
+    /// Query `hermes sessions list` and return the ID of the most recently
+    /// active session (the top data row after the header separator).
+    ///
+    /// Output format (verified against live CLI):
+    /// ```
+    /// Title   Preview   Last Active   ID
+    /// ─────────────────────────────────────
+    /// —       hello     just now      20260606_221422_28a094
+    /// ```
+    /// The ID is always the last whitespace-separated token on the first data row.
+    pub fn get_latest_cli_session_id(&self) -> Option<String> {
+        let output = Command::new(&self.bin)
+            .args(&["sessions", "list"])
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Skip header (line 0) and separator (line 1); first data row is line 2.
+        let lines: Vec<&str> = stdout.lines().collect();
+        if lines.len() > 2 {
+            let first_data_line = lines[2];
+            if let Some(id) = first_data_line.split_whitespace().last() {
+                return Some(id.to_string());
+            }
+        }
+        None
+    }
+
     /// Invoke the Hermes CLI for a single conversation turn.
     ///
-    /// Spawns: `hermes --pass-session-id -z <text> [--resume <cli_session_id>]`
+    /// Spawns: `hermes -z <text> [-r <cli_session_id>]`
     ///
-    /// Reads stdout line-by-line on a dedicated OS thread (no tokio dep needed):
-    /// - First line matching `SESSION_ID=<value>` is parsed and returned as
-    ///   `new_cli_session_id`; that line is NOT included in the response content.
-    /// - Every subsequent non-empty line is emitted as a `hermes://chunk` event
+    /// Reads stdout line-by-line on a dedicated OS thread:
+    /// - Every non-empty line is emitted as a `hermes://chunk` Tauri event
     ///   and accumulated into `response_content`.
     ///
-    /// Returns `(response_content, new_cli_session_id)` on success, or `Err` on
-    /// non-zero exit / spawn failure.
+    /// Session ID capture:
+    /// - If `cli_session_id` is already `Some`, the same ID is returned unchanged.
+    /// - If `None` (first turn), queries `sessions list` after the process exits
+    ///   to get the newly created session ID.
+    ///
+    /// Returns `(response_content, new_cli_session_id)` on success,
+    /// or `Err` on non-zero exit / spawn failure.
     pub fn run(
         &self,
         app_handle: AppHandle,
@@ -65,11 +100,13 @@ impl HermesBridge {
         cli_session_id: Option<String>,
         text: String,
     ) -> Result<(String, Option<String>), String> {
+        let is_new_session = cli_session_id.is_none();
+
         let mut cmd = Command::new(&self.bin);
-        cmd.arg("--pass-session-id").arg("-z").arg(&text);
+        cmd.arg("-z").arg(&text);
 
         if let Some(ref cli_id) = cli_session_id {
-            cmd.arg("--resume").arg(cli_id);
+            cmd.arg("-r").arg(cli_id);
         }
 
         cmd.stdout(Stdio::piped());
@@ -84,15 +121,12 @@ impl HermesBridge {
             .take()
             .ok_or_else(|| "Failed to capture stdout".to_string())?;
 
-        // Read stdout line-by-line on a dedicated OS thread to avoid blocking
-        // the async Tauri executor. Results are sent back via an mpsc channel.
-        let (tx, rx) = mpsc::channel::<Result<(String, Option<String>), String>>();
+        // Read stdout on a dedicated OS thread (avoids blocking the async Tauri executor).
+        let (tx, rx) = mpsc::channel::<Result<(String,), String>>();
 
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             let mut response_lines: Vec<String> = Vec::new();
-            let mut extracted_session_id: Option<String> = None;
-            let mut session_id_checked = false;
 
             for line_result in reader.lines() {
                 let line = match line_result {
@@ -103,24 +137,8 @@ impl HermesBridge {
                     }
                 };
 
-                // Check the first non-empty line for SESSION_ID=<value>
-                if !session_id_checked {
-                    if line.starts_with("SESSION_ID=") {
-                        let value = line["SESSION_ID=".len()..].trim().to_string();
-                        if !value.is_empty() {
-                            extracted_session_id = Some(value);
-                        }
-                        session_id_checked = true;
-                        // Do not emit this line as a chunk
-                        continue;
-                    } else if !line.trim().is_empty() {
-                        // First non-empty line is NOT a SESSION_ID line
-                        session_id_checked = true;
-                    }
-                }
-
                 if !line.is_empty() {
-                    // Emit event to frontend
+                    // Emit streaming event to frontend
                     let _ = app_handle.emit(
                         "hermes://chunk",
                         ChunkPayload {
@@ -132,11 +150,11 @@ impl HermesBridge {
                 }
             }
 
-            let _ = tx.send(Ok((response_lines.join("\n"), extracted_session_id)));
+            let _ = tx.send(Ok((response_lines.join("\n"),)));
         });
 
-        // Await the reader thread result
-        let (response_content, new_cli_session_id) = rx
+        // Await the reader thread
+        let (response_content,) = rx
             .recv()
             .map_err(|_| "Reader thread dropped sender unexpectedly".to_string())??;
 
@@ -166,6 +184,15 @@ impl HermesBridge {
                 if stderr.is_empty() { "no stderr output" } else { &stderr }
             ));
         }
+
+        // For the first turn of a session, capture the new CLI session ID via
+        // `sessions list`. The race window is minimal: we wait until process exit
+        // before querying, so the session file is already flushed by the CLI.
+        let new_cli_session_id = if is_new_session {
+            self.get_latest_cli_session_id()
+        } else {
+            cli_session_id
+        };
 
         Ok((response_content, new_cli_session_id))
     }
