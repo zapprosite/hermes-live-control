@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Menu, Paperclip, Mic, Orbit, Play, MessageSquare, Search, Send } from "lucide-react";
+import { Menu, Paperclip, Orbit, Play, MessageSquare, Search, Send } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import "./index.css";
 
