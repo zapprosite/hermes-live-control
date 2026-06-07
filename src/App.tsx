@@ -5,11 +5,19 @@ import { listen } from "@tauri-apps/api/event";
 import SessionSidebar, { type SessionSummary } from "./components/SessionSidebar";
 import "./index.css";
 
+interface HermesStatus {
+  found: boolean;
+  path: string | null;
+  version: string | null;
+  error: string | null;
+}
+
 function App() {
   const [inputText, setInputText] = useState("");
   const [isLiveVoice, setIsLiveVoice] = useState(false);
+  const [attachToast, setAttachToast] = useState(false);
+  const [hermesWarning, setHermesWarning] = useState<string | null>(null);
 
-  
   // App states
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [currentSession, setCurrentSession] = useState<SessionSummary | null>(null);
@@ -20,9 +28,18 @@ function App() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Load sessions on mount
+  // Load sessions and check Hermes status on mount
   useEffect(() => {
     loadSessions();
+    invoke<HermesStatus>("check_hermes_status").then((status) => {
+      if (!status.found || status.error) {
+        setHermesWarning(
+          status.error ?? "Hermes CLI não encontrado. Verifique sua instalação."
+        );
+      }
+    }).catch(() => {
+      setHermesWarning("Não foi possível verificar o status do Hermes CLI.");
+    });
   }, []);
 
   // Scroll to bottom on new messages
@@ -179,17 +196,25 @@ function App() {
       {/* Main Container */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-surface/50 backdrop-blur-md sticky top-0 z-10 transition-all duration-300">
-          <button 
-            onClick={() => setIsSidebarOpen(true)}
-            className="p-2 -ml-2 rounded-lg hover:bg-border/50 text-secondary hover:text-primary transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-          <h1 className="text-sm font-medium tracking-widest text-primary/80 uppercase">Hermes</h1>
-          <div className="w-9 h-9 rounded-full bg-border flex items-center justify-center overflow-hidden border border-border">
-            <div className="w-full h-full bg-gradient-to-tr from-accent to-purple-600 opacity-80" />
+        <header className="flex flex-col border-b border-border bg-surface/50 backdrop-blur-md sticky top-0 z-10">
+          <div className="flex items-center justify-between px-6 py-4 transition-all duration-300">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 -ml-2 rounded-lg hover:bg-border/50 text-secondary hover:text-primary transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <h1 className="text-sm font-medium tracking-widest text-primary/80 uppercase">Hermes</h1>
+            <div className="w-9 h-9 rounded-full bg-border flex items-center justify-center overflow-hidden border border-border">
+              <div className="w-full h-full bg-gradient-to-tr from-accent to-purple-600 opacity-80" />
+            </div>
           </div>
+          {hermesWarning && (
+            <div className="flex items-center justify-between gap-2 px-6 py-2 bg-yellow-500/10 border-t border-yellow-500/20 text-yellow-400 text-xs">
+              <span>⚠ {hermesWarning}</span>
+              <button onClick={() => setHermesWarning(null)} className="text-yellow-400/60 hover:text-yellow-400 cursor-pointer">✕</button>
+            </div>
+          )}
         </header>
 
         {/* Main Body */}
@@ -296,13 +321,19 @@ function App() {
         <footer className="w-full max-w-3xl mx-auto px-6 pb-8 pt-2">
           <div className="relative flex items-end w-full rounded-2xl bg-surface border border-border/80 shadow-2xl overflow-hidden focus-within:ring-1 focus-within:ring-accent/40 focus-within:border-accent/40 transition-all duration-300">
             
-            <div className="flex items-center p-3">
-              <button 
-                onClick={() => alert("File attachment interop is active.")}
+            <div className="flex items-center p-3 relative">
+              <button
+                onClick={() => { setAttachToast(true); setTimeout(() => setAttachToast(false), 2500); }}
                 className="p-2 rounded-full text-secondary hover:text-primary hover:bg-border/50 transition-colors cursor-pointer"
+                title="Anexar arquivo (em breve)"
               >
                 <Paperclip className="w-5 h-5" />
               </button>
+              {attachToast && (
+                <span className="absolute bottom-full left-0 mb-2 whitespace-nowrap bg-surface border border-border text-secondary text-xs rounded-lg px-3 py-1.5 shadow-lg pointer-events-none">
+                  Anexos disponíveis em breve
+                </span>
+              )}
             </div>
 
             {isLiveVoice ? (

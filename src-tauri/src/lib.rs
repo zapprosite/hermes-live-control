@@ -2,6 +2,7 @@ mod bridge;
 
 use std::fs::{self};
 use std::path::PathBuf;
+use std::process::Command;
 use serde::{Serialize, Deserialize};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
@@ -196,6 +197,42 @@ async fn send_message(app_handle: AppHandle, session_id: String, text: String) -
     Ok(assistant_msg)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HermesStatus {
+    found: bool,
+    path: Option<String>,
+    version: Option<String>,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn check_hermes_status() -> HermesStatus {
+    let bridge = match HermesBridge::new() {
+        Ok(b) => b,
+        Err(e) => return HermesStatus { found: false, path: None, version: None, error: Some(e) },
+    };
+
+    let path = bridge.bin.clone();
+
+    match Command::new(&bridge.bin).arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            HermesStatus { found: true, path: Some(path), version: Some(version), error: None }
+        }
+        Ok(output) => {
+            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let detail = if err.is_empty() {
+                format!("exit {}", output.status.code().unwrap_or(-1))
+            } else {
+                err
+            };
+            HermesStatus { found: true, path: Some(path), version: None, error: Some(detail) }
+        }
+        Err(e) => HermesStatus { found: true, path: Some(path), version: None, error: Some(e.to_string()) },
+    }
+}
+
 #[tauri::command]
 fn get_livekit_token() -> Result<LiveKitCredentials, String> {
     Ok(LiveKitCredentials {
@@ -216,7 +253,8 @@ pub fn run() {
             rename_session,
             delete_session,
             send_message,
-            get_livekit_token
+            get_livekit_token,
+            check_hermes_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
